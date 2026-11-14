@@ -1,13 +1,16 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from .database import User, Proxy, ProxySession, QueueItem, Event, Setting
+from .database import User, Proxy, ProxySession, QueueItem, Event, Setting, SessionConfirmation
 
 def now(): return datetime.now(timezone.utc).replace(tzinfo=None)
 def user_name(user): return user.full_name or user.username or str(user.id)
 
 class QueueService:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], ttl: int): self.sessions, self.ttl = sessions, ttl
+    def __init__(self, sessions: async_sessionmaker[AsyncSession], ttl: int, confirmation_interval: int, confirmation_grace: int):
+        self.sessions, self.ttl = sessions, ttl
+        self.confirmation_interval = confirmation_interval
+        self.confirmation_grace = confirmation_grace
     async def _lock(self, s):
         # SQLite serializes writers; PostgreSQL deployment should replace with SELECT ... FOR UPDATE on Proxy.
         await s.execute(text("BEGIN IMMEDIATE"))
@@ -72,6 +75,51 @@ class QueueService:
                 if n: notices.append((pid,n))
             await s.commit()
         return notices
+    async def process_session_confirmations(self):
+        """Return notifications and changed proxy IDs for the background worker."""
+        notifications, changed_proxies = [], set()
+        async with self.sessions() as s:
+            await self._lock(s)
+            active = (await s.scalars(select(ProxySession).where(ProxySession.ended_at.is_(None)))).all()
+            for session in active:
+                confirmation = await s.get(SessionConfirmation, session.id)
+                if not confirmation:
+                    s.add(SessionConfirmation(session_id=session.id, last_confirmed_at=session.started_at))
+                    continue
+                if confirmation.expires_at and confirmation.expires_at <= now():
+                    session.ended_at, session.ended_reason = now(), "confirmation_timeout"
+                    s.add(Event(proxy_id=session.proxy_id, user_id=session.user_id, kind="confirmation_timeout"))
+                    proxy = await s.get(Proxy, session.proxy_id)
+                    offered = await self._offer_next(s, proxy)
+                    if offered:
+                        notifications.append(("offer", session.proxy_id, offered, None))
+                    changed_proxies.add(session.proxy_id)
+                elif confirmation.expires_at is None and confirmation.last_confirmed_at <= now() - timedelta(seconds=self.confirmation_interval):
+                    confirmation.requested_at = now()
+                    confirmation.expires_at = now() + timedelta(seconds=self.confirmation_grace)
+                    notifications.append(("confirm", session.proxy_id, session.user_id, session.id))
+            await s.commit()
+        return notifications, changed_proxies
+    async def confirm_session(self, session_id: int, user_id: int, stay: bool):
+        async with self.sessions() as s:
+            await self._lock(s)
+            session = await s.get(ProxySession, session_id)
+            confirmation = await s.get(SessionConfirmation, session_id)
+            if not session or session.user_id != user_id or session.ended_at is not None or not confirmation or not confirmation.expires_at or confirmation.expires_at <= now():
+                return "expired", None, None
+            if stay:
+                confirmation.last_confirmed_at = now()
+                confirmation.requested_at = confirmation.expires_at = None
+                s.add(Event(proxy_id=session.proxy_id, user_id=user_id, kind="session_confirmed"))
+                await s.commit()
+                return "stayed", session.proxy_id, None
+            session.ended_at, session.ended_reason = now(), "user_confirmed_leave"
+            confirmation.expires_at = None
+            s.add(Event(proxy_id=session.proxy_id, user_id=user_id, kind="left_after_confirmation"))
+            proxy = await s.get(Proxy, session.proxy_id)
+            offered = await self._offer_next(s, proxy)
+            await s.commit()
+            return "left", session.proxy_id, offered
     async def snapshot(self, proxy_id):
         async with self.sessions() as s:
             p=await s.get(Proxy,proxy_id)

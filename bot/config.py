@@ -10,6 +10,8 @@ class Settings:
     log_level: str
     bootstrap_admin_ids: tuple[int, ...]
     allow_multiple_proxies: bool
+    session_confirmation_interval_seconds: int
+    session_confirmation_grace_seconds: int
 
 def load_settings() -> Settings:
     load_dotenv()
@@ -19,6 +21,8 @@ def load_settings() -> Settings:
     ids = tuple(int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip())
     allow_multiple = os.getenv("ALLOW_MULTIPLE_PROXIES", "true").strip().lower() in {"1", "true", "yes"}
     return Settings(token, os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./queue_bot.db"),
-                    int(os.getenv("OFFER_TTL_SECONDS", "300")), os.getenv("LOG_LEVEL", "INFO"), ids,
-                    allow_multiple)
+                    int(os.getenv("OFFER_TTL_SECONDS", "3600")), os.getenv("LOG_LEVEL", "INFO"), ids,
+                    allow_multiple,
+                    int(os.getenv("SESSION_CONFIRMATION_INTERVAL_SECONDS", "10800")),
+                    int(os.getenv("SESSION_CONFIRMATION_GRACE_SECONDS", "600")))
 

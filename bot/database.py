@@ -32,6 +32,13 @@ class ProxySession(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)
     ended_reason: Mapped[str | None] = mapped_column(String(40))
 
+class SessionConfirmation(Base):
+    __tablename__ = "session_confirmations"
+    session_id: Mapped[int] = mapped_column(ForeignKey("proxy_sessions.id"), primary_key=True)
+    last_confirmed_at: Mapped[datetime] = mapped_column(DateTime)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+
 class QueueItem(Base):
     __tablename__ = "queue"
     id: Mapped[int] = mapped_column(primary_key=True)

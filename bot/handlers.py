@@ -70,6 +70,27 @@ def is_proxy_callback(cb: CallbackQuery) -> bool:
     """Use an explicit predicate: it accepts only our compact callback protocol."""
     return bool(cb.data and re.fullmatch(r"[jlq]:\d+", cb.data))
 
+def is_confirmation_callback(cb: CallbackQuery) -> bool:
+    return bool(cb.data and re.fullmatch(r"c:\d+:[sl]", cb.data))
+
+@router.callback_query(is_confirmation_callback)
+async def session_confirmation(cb: CallbackQuery, service, sessions):
+    _, session_id, choice = cb.data.split(":")
+    result, proxy_id, offered_user = await service.confirm_session(int(session_id), cb.from_user.id, choice == "s")
+    if result == "expired":
+        return await cb.answer("Время подтверждения истекло.", show_alert=True)
+    await cb.answer()
+    if cb.message:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    await refresh(cb.bot, service, sessions, proxy_id)
+    if offered_user:
+        proxy = await service.get_proxy(proxy_id)
+        await cb.bot.send_message(
+            offered_user,
+            f"🔔 {proxy.name}: место доступно. Подтверди вход в течение 1 часа.",
+            reply_markup=offer_keyboard(proxy_id),
+        )
+
 @router.callback_query(is_proxy_callback)
 async def callback(cb: CallbackQuery, service, sessions):
     action,pid=cb.data.split(':'); pid=int(pid); p=await service.get_proxy(pid)
@@ -88,7 +109,7 @@ async def callback(cb: CallbackQuery, service, sessions):
     await cb.answer() if ok else await cb.answer('Ты не используешь этот прокси.',show_alert=True)
     await refresh(cb.bot,service,sessions,pid)
     if offer:
-        await cb.bot.send_message(offer,f'🔔 {p.name} освободился. Подтверди вход в течение 5 минут.',reply_markup=offer_keyboard(pid))
+        await cb.bot.send_message(offer,f'🔔 {p.name} освободился. Подтверди вход в течение 1 часа.',reply_markup=offer_keyboard(pid))
 
 @router.message(Command("status"))
 async def status(message: Message, service, sessions):

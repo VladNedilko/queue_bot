@@ -6,3 +6,9 @@ def proxy_keyboard(proxy_id: int) -> InlineKeyboardMarkup:
 def offer_keyboard(proxy_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🟢 ЗАЙТИ", callback_data=f"j:{proxy_id}")]])
 
+def confirmation_keyboard(session_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ ОСТАТЬСЯ", callback_data=f"c:{session_id}:s"),
+        InlineKeyboardButton(text="🚪 ВЫЙТИ", callback_data=f"c:{session_id}:l"),
+    ]])
+

@@ -4,14 +4,28 @@ from aiogram.exceptions import TelegramNetworkError
 from .config import load_settings
 from .database import Base, Admin, Setting, make_session_factory
 from .services import QueueService
-from .handlers import router
+from .handlers import router, refresh
+from .keyboards import offer_keyboard, confirmation_keyboard
 
 async def offer_watcher(bot, service, sessions):
     while True:
         try:
             for pid,uid in await service.expire_offers():
-                p=await service.get_proxy(pid); from .keyboards import offer_keyboard
-                await bot.send_message(uid,f'🔔 {p.name}: место доступно. Подтверди вход в течение 5 минут.',reply_markup=offer_keyboard(pid))
+                p=await service.get_proxy(pid)
+                await bot.send_message(uid, f'🔔 {p.name}: место доступно. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(pid))
+            notifications, changed = await service.process_session_confirmations()
+            for kind, proxy_id, user_id, session_id in notifications:
+                proxy = await service.get_proxy(proxy_id)
+                if kind == "confirm":
+                    await bot.send_message(
+                        user_id,
+                        f"⏰ Ты используешь {proxy.name} уже 3 часа. Подтверди в течение 10 минут: остаться или выйти.",
+                        reply_markup=confirmation_keyboard(session_id),
+                    )
+                else:
+                    await bot.send_message(user_id, f'🔔 {proxy.name}: место доступно. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(proxy_id))
+            for proxy_id in changed:
+                await refresh(bot, service, sessions, proxy_id)
         except Exception: logging.exception('offer watcher failed')
         await asyncio.sleep(15)
 async def main():
@@ -27,7 +41,8 @@ async def main():
         else:
             s.add(Setting(key="allow_multiple_proxies", value=str(cfg.allow_multiple_proxies).lower()))
         await s.commit()
-    bot=Bot(cfg.token); dp=Dispatcher(); dp.include_router(router); service=QueueService(sessions,cfg.offer_ttl_seconds)
+    bot=Bot(cfg.token); dp=Dispatcher(); dp.include_router(router)
+    service=QueueService(sessions, cfg.offer_ttl_seconds, cfg.session_confirmation_interval_seconds, cfg.session_confirmation_grace_seconds)
     task=asyncio.create_task(offer_watcher(bot,service,sessions))
     try:
         while True:
