@@ -12,7 +12,8 @@ async def offer_watcher(bot, service, sessions):
         try:
             for pid,uid in await service.expire_offers():
                 p=await service.get_proxy(pid)
-                await bot.send_message(uid, f'🔔 {p.name}: место доступно. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(pid))
+                topic_url = await service.topic_link(pid)
+                await bot.send_message(uid, f'🔔 {p.name}: место доступно. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(pid, topic_url))
             notifications, changed = await service.process_session_confirmations()
             for kind, proxy_id, user_id, session_id in notifications:
                 proxy = await service.get_proxy(proxy_id)
@@ -23,7 +24,8 @@ async def offer_watcher(bot, service, sessions):
                         reply_markup=confirmation_keyboard(session_id),
                     )
                 else:
-                    await bot.send_message(user_id, f'🔔 {proxy.name}: место доступно. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(proxy_id))
+                    topic_url = await service.topic_link(proxy_id)
+                    await bot.send_message(user_id, f'🔔 {proxy.name}: место доступно. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(proxy_id, topic_url))
             for proxy_id in changed:
                 await refresh(bot, service, sessions, proxy_id)
         except Exception: logging.exception('offer watcher failed')

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from .database import User, Proxy, ProxySession, QueueItem, Event, Setting, SessionConfirmation
+from .database import User, Proxy, ProxySession, QueueItem, Event, Setting, SessionConfirmation, BotMessage
 
 def now(): return datetime.now(timezone.utc).replace(tzinfo=None)
 def user_name(user): return user.full_name or user.username or str(user.id)
@@ -30,6 +30,18 @@ class QueueService:
                 QueueItem.offer_expires_at > now(),
             ))
             return item is not None
+    async def topic_link(self, proxy_id: int) -> str | None:
+        """Build a Telegram deep link to the proxy's persistent card message."""
+        async with self.sessions() as s:
+            proxy = await s.get(Proxy, proxy_id)
+            card = await s.scalar(select(BotMessage).where(BotMessage.proxy_id == proxy_id))
+            if not proxy or not card:
+                return None
+            chat_id = str(proxy.chat_id)
+            # Supergroup IDs are -100<internal ID>; t.me/c uses the internal part.
+            if not chat_id.startswith("-100"):
+                return None
+            return f"https://t.me/c/{chat_id[4:]}/{proxy.thread_id}/{card.message_id}"
     async def join(self, proxy_id, tg):
         async with self.sessions() as s:
             await self._lock(s); await self.upsert_user(s, tg)

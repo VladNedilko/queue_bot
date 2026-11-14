@@ -85,10 +85,11 @@ async def session_confirmation(cb: CallbackQuery, service, sessions):
     await refresh(cb.bot, service, sessions, proxy_id)
     if offered_user:
         proxy = await service.get_proxy(proxy_id)
+        topic_url = await service.topic_link(proxy_id)
         await cb.bot.send_message(
             offered_user,
             f"🔔 {proxy.name}: место доступно. Подтверди вход в течение 1 часа.",
-            reply_markup=offer_keyboard(proxy_id),
+            reply_markup=offer_keyboard(proxy_id, topic_url),
         )
 
 @router.callback_query(is_proxy_callback)
@@ -119,7 +120,8 @@ async def callback(cb: CallbackQuery, service, sessions):
     await cb.answer() if ok else await cb.answer('Ты не используешь этот прокси.',show_alert=True)
     await refresh(cb.bot,service,sessions,pid)
     if offer:
-        await cb.bot.send_message(offer,f'🔔 {p.name} освободился. Подтверди вход в течение 1 часа.',reply_markup=offer_keyboard(pid))
+        topic_url = await service.topic_link(pid)
+        await cb.bot.send_message(offer, f'🔔 {p.name} освободился. Подтверди вход в течение 1 часа.', reply_markup=offer_keyboard(pid, topic_url))
 
 @router.message(Command("status"))
 async def status(message: Message, service, sessions):
