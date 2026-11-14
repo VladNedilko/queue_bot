@@ -46,7 +46,16 @@ class QueueService:
         async with self.sessions() as s:
             await self._lock(s); p = await s.get(Proxy, proxy_id)
             session = await s.scalar(select(ProxySession).where(ProxySession.proxy_id == proxy_id, ProxySession.user_id == tg_id, ProxySession.ended_at.is_(None)))
-            if not session: return False, None
+            if not session:
+                # “ВЫЙТИ” also means “leave the waiting list”.  This covers a
+                # user who changed their mind before receiving a proxy slot.
+                queued = await s.scalar(select(QueueItem).where(QueueItem.proxy_id == proxy_id, QueueItem.user_id == tg_id))
+                if not queued:
+                    return False, None
+                await s.delete(queued)
+                s.add(Event(proxy_id=proxy_id, user_id=tg_id, kind="left_queue"))
+                await s.commit()
+                return True, None
             session.ended_at, session.ended_reason = now(), "user_left"; s.add(Event(proxy_id=proxy_id, user_id=tg_id, kind="left")); offered = await self._offer_next(s, p)
             await s.commit(); return True, offered
     async def _offer_next(self, s, p):
