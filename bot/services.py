@@ -20,6 +20,16 @@ class QueueService:
         else: s.add(User(telegram_id=tg.id, username=tg.username, display_name=user_name(tg)))
     async def get_proxy(self, proxy_id: int):
         async with self.sessions() as s: return await s.get(Proxy, proxy_id)
+    async def has_active_offer(self, proxy_id: int, user_id: int) -> bool:
+        """Validate a private 'claim your place' button without trusting its callback data."""
+        async with self.sessions() as s:
+            item = await s.scalar(select(QueueItem).where(
+                QueueItem.proxy_id == proxy_id,
+                QueueItem.user_id == user_id,
+                QueueItem.state == "offered",
+                QueueItem.offer_expires_at > now(),
+            ))
+            return item is not None
     async def join(self, proxy_id, tg):
         async with self.sessions() as s:
             await self._lock(s); await self.upsert_user(s, tg)

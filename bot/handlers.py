@@ -94,7 +94,17 @@ async def session_confirmation(cb: CallbackQuery, service, sessions):
 @router.callback_query(is_proxy_callback)
 async def callback(cb: CallbackQuery, service, sessions):
     action,pid=cb.data.split(':'); pid=int(pid); p=await service.get_proxy(pid)
-    if not p or cb.message.chat.id!=p.chat_id or cb.message.message_thread_id!=p.thread_id: return await cb.answer("Недействительная кнопка",show_alert=True)
+    in_proxy_topic = bool(
+        p and cb.message.chat.id == p.chat_id and cb.message.message_thread_id == p.thread_id
+    )
+    # A queue offer is intentionally sent to a private chat. It is valid only
+    # for the exact user with an unexpired reservation in the database.
+    in_private_offer = bool(
+        p and action == "j" and cb.message.chat.id == cb.from_user.id
+        and await service.has_active_offer(pid, cb.from_user.id)
+    )
+    if not in_proxy_topic and not in_private_offer:
+        return await cb.answer("Недействительная или просроченная кнопка", show_alert=True)
     if action=='q':
         _,_,q=await service.snapshot(pid)
         text='📋 Очередь\n'+('\n'.join(f"{i}. {visible_name(n,u)} — {t:%H:%M}" for i,(n,u,t,_) in enumerate(q,1)) or 'Пусто')
