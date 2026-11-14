@@ -1,0 +1,43 @@
+# Telegram Forum Proxy Queue
+
+Рабочий MVP на Python 3.12+, aiogram 3 и SQLAlchemy 2. Один бот обслуживает topics одной forum-группы; каждому proxy сопоставляются `chat_id` и `message_thread_id`.
+
+## Важные ограничения Telegram API
+
+Bot API передаёт `message_thread_id` в сообщениях topic и позволяет отправлять сообщения в конкретный topic. События `forum_topic_closed` и `forum_topic_reopened` тоже приходят сообщением, поэтому состояние зарегистрированного topic обновляется автоматически. Официального метода **Bot API** для получения полного списка существующих topics нет: `messages.getForumTopics` относится к пользовательскому MTProto API и прямо помечен «Only users». Поэтому MVP использует надёжную явную регистрацию `/setup` внутри каждого topic. См. [Bot API](https://core.telegram.org/bots/api) и [ограничение MTProto-метода](https://core.telegram.org/method/messages.getForumTopics).
+
+## Установка и запуск
+
+1. Создайте бота через [@BotFather](https://t.me/BotFather), получите token. Для корректной обработки служебных сообщений и команд в группе отключите Privacy Mode (`/setprivacy` → Disable).
+2. Создайте supergroup и включите **Topics**. Добавьте бота один раз в эту группу и назначьте администратором. Нужны право отправлять сообщения; для создания/закрытия topics дополнительно нужно `can_manage_topics` (MVP topics не создаёт). Не выдавайте лишних прав.
+3. Создайте окружение, установите зависимости и настройте секрет:
+
+   ```powershell
+   py -3.12 -m venv 
+   
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+   
+   pip install -r requirements.txt
+   Copy-Item .env.example .env
+   # внесите BOT_TOKEN в .env
+   alembic upgrade head
+   python -m bot.main
+   ```
+
+Если окружение было создано до этого изменения и запуск сообщает об отсутствии `greenlet`, обновите зависимости: `python -m pip install -r requirements.txt`.
+
+4. Укажите свой числовой Telegram ID в `ADMIN_IDS` файла `.env`, перезапустите бот, затем в каждом topic выполните `/setup Прокси-№1 3`. Команда сохраняет `chat_id + message_thread_id` и публикует карточку с кнопками.
+5. Нажмите «ЗАЙТИ» четырьмя аккаунтами: первые три получат сессию, четвёртый — очередь. Карточка в topic сразу обновится для всех участников. Нажмите «ВЫЙТИ»: первому ожидающему придёт личное сообщение с подтверждением на 5 минут; для него пользователь должен сначала открыть личный чат с ботом и отправить `/start`. Кнопка «ОЧЕРЕДЬ» показывает всплывающее окно только нажавшему и не требует личного чата; Telegram ограничивает такой ответ 200 символами, поэтому длинный список сокращается.
+
+Логи выводятся в консоль. Для сброса тестовых данных остановите бот и удалите только файл `queue_bot.db`, затем повторите `alembic upgrade head`.
+
+### Ошибка подключения к Telegram
+
+Ошибка `Cannot connect to host api.telegram.org:443` или Windows `WinError 64` означает, что ОС/сеть разорвала HTTPS-соединение с Telegram; это не связано с token, topics или SQLite. Проверьте, открывается ли `https://api.telegram.org` в браузере с того же компьютера, и исключите блокировку VPN, прокси, антивирусом или корпоративной сетью. Бот автоматически повторяет подключение каждые 10 секунд после кратковременного сбоя.
+
+## Админ-команды MVP
+
+`/setup <название> [лимит]` — регистрация/обновление текущего topic; `/status` — общий статус; `/users` и `/queues` — сводки; `/reset <внутренний_id>` — завершает сессии и очищает очередь выбранного proxy. Доступ проверяется по таблице `admins`. Схема содержит `users`, `proxies`, `proxy_sessions`, `queue`, `bot_messages`, `admins`, `session_history`, `settings`.
+
+Очередь защищена транзакцией `BEGIN IMMEDIATE` в SQLite: два одновременных нажатия не могут создать состояние 4/3. При миграции на PostgreSQL замените этот участок на блокировку строки proxy `SELECT ... FOR UPDATE`; модель и async-слой уже разделены для такой замены.

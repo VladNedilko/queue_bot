@@ -1,0 +1,7 @@
+aiogram>=3.22,<4.0
+# The asyncio extra installs greenlet, required by SQLAlchemy's async layer.
+SQLAlchemy[asyncio]>=2.0,<3.0
+aiosqlite>=0.20
+alembic>=1.14
+python-dotenv>=1.0
+
