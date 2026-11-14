@@ -6,6 +6,8 @@
 
 Bot API передаёт `message_thread_id` в сообщениях topic и позволяет отправлять сообщения в конкретный topic. События `forum_topic_closed` и `forum_topic_reopened` тоже приходят сообщением, поэтому состояние зарегистрированного topic обновляется автоматически. Официального метода **Bot API** для получения полного списка существующих topics нет: `messages.getForumTopics` относится к пользовательскому MTProto API и прямо помечен «Only users». Поэтому MVP использует надёжную явную регистрацию `/setup` внутри каждого topic. См. [Bot API](https://core.telegram.org/bots/api) и [ограничение MTProto-метода](https://core.telegram.org/method/messages.getForumTopics).
 
+По умолчанию пользователь может одновременно занять несколько разных proxy. Управляет этим параметр `.env`: `ALLOW_MULTIPLE_PROXIES=true`. Повторно занять уже используемый им proxy по-прежнему нельзя.
+
 ## Установка и запуск
 
 1. Создайте бота через [@BotFather](https://t.me/BotFather), получите token. Для корректной обработки служебных сообщений и команд в группе отключите Privacy Mode (`/setprivacy` → Disable).

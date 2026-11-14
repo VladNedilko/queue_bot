@@ -2,7 +2,7 @@ import asyncio, logging
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramNetworkError
 from .config import load_settings
-from .database import Base, Admin, make_session_factory
+from .database import Base, Admin, Setting, make_session_factory
 from .services import QueueService
 from .handlers import router
 
@@ -21,6 +21,11 @@ async def main():
     async with sessions() as s:
         for user_id in cfg.bootstrap_admin_ids:
             if not await s.get(Admin, user_id): s.add(Admin(telegram_id=user_id))
+        setting = await s.get(Setting, "allow_multiple_proxies")
+        if setting:
+            setting.value = str(cfg.allow_multiple_proxies).lower()
+        else:
+            s.add(Setting(key="allow_multiple_proxies", value=str(cfg.allow_multiple_proxies).lower()))
         await s.commit()
     bot=Bot(cfg.token); dp=Dispatcher(); dp.include_router(router); service=QueueService(sessions,cfg.offer_ttl_seconds)
     task=asyncio.create_task(offer_watcher(bot,service,sessions))
