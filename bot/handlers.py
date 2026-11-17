@@ -1,26 +1,37 @@
 import asyncio
 import logging
 import re
+from datetime import timezone
+from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy import select, func
 from .database import Proxy, Admin, BotMessage
 from .keyboards import proxy_keyboard, offer_keyboard
 
 router = Router(); log = logging.getLogger(__name__)
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
 def topic(message): return message.message_thread_id if message.is_topic_message else None
 def visible_name(name: str, username: str | None) -> str:
     return f"{name} (@{username})" if username else name
+def kyiv_time(value) -> str:
+    """Database timestamps are stored as naive UTC; show them in Kyiv time."""
+    return value.replace(tzinfo=timezone.utc).astimezone(KYIV_TZ).strftime("%H:%M")
 async def is_admin(message, sessions):
     if not message.from_user: return False
     async with sessions() as s: return bool(await s.get(Admin, message.from_user.id))
 
 @router.message(Command("start"))
-async def start(message: Message, sessions):
-    """Show the operational guide only to configured bot administrators."""
+async def start(message: Message, service, sessions):
+    """Start allows Telegram to deliver future personal notifications."""
+    if message.from_user:
+        async with sessions() as s:
+            await service.upsert_user(s, message.from_user)
+            await s.commit()
     if not await is_admin(message, sessions):
-        return await message.answer("Бот управляет очередью в topics группы. Доступ к административным командам ограничен.")
+        return await message.answer("✅ Уведомления включены. Я напишу, когда подойдёт ваша очередь или потребуется подтвердить использование proxy.")
     await message.answer(
         "👋 Панель администратора очереди\n\n"
         "/setup <название> [лимит] — зарегистрировать или обновить proxy в текущем topic.\n"
@@ -37,15 +48,51 @@ async def render(service, proxy_id):
     return f"🖥 {p.name}\n\nСтатус: {status}\n\n{names}\n\n📋 Очередь: {len(q)} человек\n{queue}"
 async def refresh(bot, service, sessions, proxy_id):
     async with sessions() as s: bm=await s.scalar(select(BotMessage).where(BotMessage.proxy_id==proxy_id))
-    if bm:
+    if not bm:
+        return False
+    try:
+        await bot.edit_message_text(
+            text=await render(service, proxy_id),
+            chat_id=bm.chat_id,
+            message_id=bm.message_id,
+            reply_markup=proxy_keyboard(proxy_id),
+        )
+        return True
+    except TelegramBadRequest as error:
+        if "message is not modified" in str(error).lower():
+            return True
+        log.warning("Could not refresh proxy card %s: %s", proxy_id, error)
+    except Exception:
+        log.exception("Could not refresh proxy card %s", proxy_id)
+    return False
+
+async def restore_proxy_cards(bot, service, sessions):
+    """Repair cards after deployment without asking an admin to run /setup again."""
+    async with sessions() as s:
+        proxy_ids = list((await s.scalars(select(Proxy.id).where(Proxy.is_enabled.is_(True)))).all())
+    for proxy_id in proxy_ids:
+        if await refresh(bot, service, sessions, proxy_id):
+            continue
+        proxy = await service.get_proxy(proxy_id)
+        if not proxy:
+            continue
         try:
-            await bot.edit_message_text(
+            card = await bot.send_message(
+                chat_id=proxy.chat_id,
+                message_thread_id=proxy.thread_id,
                 text=await render(service, proxy_id),
-                chat_id=bm.chat_id,
-                message_id=bm.message_id,
                 reply_markup=proxy_keyboard(proxy_id),
             )
-        except Exception: log.exception("Could not refresh proxy card")
+            async with sessions() as s:
+                saved = await s.scalar(select(BotMessage).where(BotMessage.proxy_id == proxy_id))
+                if saved:
+                    saved.chat_id, saved.message_id = card.chat.id, card.message_id
+                else:
+                    s.add(BotMessage(proxy_id=proxy_id, chat_id=card.chat.id, message_id=card.message_id))
+                await s.commit()
+            log.info("Restored proxy card %s", proxy_id)
+        except Exception:
+            log.exception("Could not restore proxy card %s", proxy_id)
 
 @router.message(Command("setup"))
 async def setup(message: Message, service, sessions):
@@ -108,7 +155,7 @@ async def callback(cb: CallbackQuery, service, sessions):
         return await cb.answer("Недействительная или просроченная кнопка", show_alert=True)
     if action=='q':
         _,_,q=await service.snapshot(pid)
-        text='📋 Очередь\n'+('\n'.join(f"{i}. {visible_name(n,u)} — {t:%H:%M}" for i,(n,u,t,_) in enumerate(q,1)) or 'Пусто')
+        text='📋 Очередь\n'+('\n'.join(f"{i}. {visible_name(n,u)} — {kyiv_time(t)}" for i,(n,u,t,_) in enumerate(q,1)) or 'Пусто')
         # This is visible only to the button presser and does not require a private chat.
         return await cb.answer(text[:197] + ('…' if len(text) > 197 else ''), show_alert=True)
     if action=='j':

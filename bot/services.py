@@ -49,9 +49,13 @@ class QueueService:
             if not p or not p.is_enabled: return "missing", None
             if p.is_closed: return "closed", None
             active = (await s.scalars(select(ProxySession).where(ProxySession.user_id == tg.id, ProxySession.ended_at.is_(None)))).all()
+            # Multiple different proxies may be allowed, but a user can never
+            # occupy the same proxy more than once.
+            if any(session.proxy_id == proxy_id for session in active):
+                return "same", proxy_id
             setting = await s.get(Setting, "allow_multiple_proxies")
             if active and (not setting or setting.value != "true"):
-                return ("same" if active[0].proxy_id == proxy_id else "other"), active[0].proxy_id
+                return "other", active[0].proxy_id
             item = await s.scalar(select(QueueItem).where(QueueItem.proxy_id == proxy_id, QueueItem.user_id == tg.id))
             if item and item.state == "waiting":
                 pos = await s.scalar(select(func.count()).select_from(QueueItem).where(QueueItem.proxy_id == proxy_id, QueueItem.state == "waiting", QueueItem.queued_at <= item.queued_at))

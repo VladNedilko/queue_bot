@@ -4,7 +4,7 @@ from aiogram.exceptions import TelegramNetworkError
 from .config import load_settings
 from .database import Base, Admin, Setting, make_session_factory
 from .services import QueueService
-from .handlers import router, refresh
+from .handlers import router, refresh, restore_proxy_cards
 from .keyboards import offer_keyboard, confirmation_keyboard
 
 async def offer_watcher(bot, service, sessions):
@@ -45,6 +45,7 @@ async def main():
         await s.commit()
     bot=Bot(cfg.token); dp=Dispatcher(); dp.include_router(router)
     service=QueueService(sessions, cfg.offer_ttl_seconds, cfg.session_confirmation_interval_seconds, cfg.session_confirmation_grace_seconds)
+    await restore_proxy_cards(bot, service, sessions)
     task=asyncio.create_task(offer_watcher(bot,service,sessions))
     try:
         while True:
